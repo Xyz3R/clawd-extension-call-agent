@@ -28,14 +28,6 @@ const CallAgentInput = Type.Object({
       })
     )
   ),
-  occupied_timeslots: Type.Optional(
-    Type.Array(
-      Type.Object({
-        start: Type.String({ description: "RFC3339 start time" }),
-        end: Type.String({ description: "RFC3339 end time" })
-      })
-    )
-  ),
   userName: Type.Optional(Type.String()),
   calleeName: Type.Optional(Type.String())
 });

@@ -14,7 +14,6 @@ export type CallRequest = {
   workingHours?: WorkingHours;
   calendarId?: string;
   occupiedTimeslots?: CalendarSlot[];
-  occupied_timeslots?: CalendarSlot[];
   userName?: string;
   calleeName?: string;
 };

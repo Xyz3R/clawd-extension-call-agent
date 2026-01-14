@@ -73,18 +73,23 @@ export class OpenAIRealtimeSession {
     const calendarId = call.request.calendarId ?? "primary";
     const currentDateTime = formatCurrentDateTime(timezone);
     const occupiedSlotsText = formatOccupiedSlots(this.calendar.getOccupiedTimeslots());
+    const callerName = call.request.userName ?? "the user";
+    const calleeName = call.request.calleeName ?? "the callee";
 
     const instructions = [
-      "You are a phone call assistant working on behalf of the user.",
-      "Your job is to schedule an appointment by speaking with the callee.",
-      "Speak only English with a native British English accent. Never use any other language.",
+      `You are the personal assistant working on behalf of the ${call.request.userName}.`,
+      "Always begin the call by greeting the callee.",
+      `Immediately after greeting, say you are calling on behalf of ${callerName} to ${calleeName} and state the purpose: ${call.request.goal}.`,
+      "Then continue the conversation to reach the scheduling goal.",
+      "Treat the provided call goal as the single source of truth. Do not change the purpose (e.g., do not turn it into a follow-up) unless the goal explicitly says so.",
       "You must confirm a specific date/time with the callee before creating an event.",
       "Always check availability with calendar_check_slot before confirming.",
       "If unavailable, use calendar_find_slots to propose alternatives.",
       "When the callee confirms, call calendar_create_event immediately.",
       "After calendar_create_event succeeds, confirm the appointment and politely end the call.",
       "Use the occupied calendar slots provided as the source of truth for availability.",
-      "Do not schedule outside business hours unless the callee explicitly requests it.",
+      "Do not schedule outside business hours.",
+      "Respected the occupied slots. They are non negotiably occupied.",
       `Business hours: ${workingHours.start}-${workingHours.end} on days ${workingHours.days.join(",")}.`,
       timezone ? `Timezone: ${timezone}.` : "",
       currentDateTime ? `Current date/time: ${currentDateTime}.` : "",
@@ -214,7 +219,13 @@ export class OpenAIRealtimeSession {
       type: "response.create",
       response: {
         instructions:
-          "Greet the callee and begin in English. Use English only, even if the callee speaks another language.",
+          [
+            "Greet the callee, state who you are calling for and the exact goal, then continue the conversation to reach that goal.",
+            call.request.goal ? `Use this goal verbatim: ${call.request.goal}.` : "",
+            "Use English only"
+          ]
+            .filter(Boolean)
+            .join(" "),
         output_modalities: ["audio"]
       }
     });

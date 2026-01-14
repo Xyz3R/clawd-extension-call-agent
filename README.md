@@ -85,7 +85,7 @@ Expected HTTP endpoints:
 Purpose: Provide a Clawdbot plugin that places calls via a telephony provider, runs a realtime voice agent, and schedules appointments without calendar conflicts.
 
 Tools:
-- `call_agent` — starts a call. Inputs: `to`, `goal`, `durationMinutes`, optional `timezone`, `windowStart`, `windowEnd`, `workingHours`, `calendarId`, `occupiedTimeslots` (or `occupied_timeslots`), `userName`, `calleeName`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
+- `call_agent` — starts a call. Inputs: `to`, `goal`, `durationMinutes`, optional `timezone`, `windowStart`, `windowEnd`, `workingHours`, `calendarId`, `occupiedTimeslots`, `userName`, `calleeName`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
 - `call_agent_status` — returns status for a `callId`.
 
 Call flow:

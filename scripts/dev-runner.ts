@@ -1,3 +1,4 @@
+import dotenv from "dotenv";
 import { parseConfig } from "../src/config.js";
 import { CallManager } from "../src/call-manager.js";
 import { CallAgentServer } from "../src/server.js";
@@ -5,6 +6,8 @@ import { createTelephonyProvider } from "../src/telephony.js";
 import type { CallRequest } from "../src/types.js";
 
 const logger = console;
+
+dotenv.config();
 
 const port = Number(process.env.PORT ?? 4545);
 const provider = (process.env.TELEPHONY_PROVIDER ?? "mock") as "mock" | "twilio";
@@ -34,6 +37,8 @@ if (!config.openai.apiKey) {
   logger.warn("OPENAI_API_KEY is not set. The realtime session will fail to connect.");
 }
 
+const callGoal = process.env.CALL_GOAL ?? "Schedule a 30-minute appointment today.";
+
 const telephony = createTelephonyProvider(config);
 let server!: CallAgentServer;
 const callManager = new CallManager({
@@ -53,6 +58,7 @@ server = new CallAgentServer({
 
 await server.start();
 logger.info(`Call agent server up on http://127.0.0.1:${port}`);
+logger.info(`Call goal: ${callGoal}`);
 
 if (process.env.AUTO_CALL === "1") {
   const now = new Date();
@@ -60,7 +66,7 @@ if (process.env.AUTO_CALL === "1") {
   const todayWorkingHours = { ...config.defaults.workingHours, days: [now.getDay()] };
   const req: CallRequest = {
     to: "+15555555555",
-    goal: process.env.CALL_GOAL ?? "Schedule a 30-minute appointment today.",
+    goal: callGoal,
     durationMinutes: 30,
     timezone: config.defaults.timezone,
     workingHours: todayWorkingHours,
@@ -80,7 +86,7 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-
+console.log(`Goal: ${process.env.CALL_GOAL}`);
 function buildTodayTestSchedule(baseDate: Date): {
   windowStart: string;
   windowEnd: string;
@@ -90,14 +96,19 @@ function buildTodayTestSchedule(baseDate: Date): {
   const windowStart = base.toISOString();
   const windowEnd = new Date(base.getTime() + 3 * 60 * 60 * 1000).toISOString();
 
+  const occupiedTimeslots = [
+    slot(base, 30, 60),
+    slot(base, 90, 120),
+    slot(base, 150, 180)
+  ]
+
+  console.log(`Occupied Timeslots: ${JSON.stringify(occupiedTimeslots, null, 2)}`)
+
+
   return {
     windowStart,
     windowEnd,
-    occupiedTimeslots: [
-      slot(base, 30, 60),
-      slot(base, 90, 120),
-      slot(base, 150, 180)
-    ]
+    occupiedTimeslots,
   };
 }
 

@@ -34,9 +34,6 @@ export class CalendarEngine {
 
   constructor(call: CallRecord) {
     this.call = call;
-    if (!this.call.request.occupiedTimeslots && this.call.request.occupied_timeslots) {
-      this.call.request.occupiedTimeslots = this.call.request.occupied_timeslots;
-    }
     if (!this.call.request.occupiedTimeslots) {
       this.call.request.occupiedTimeslots = [];
     }
