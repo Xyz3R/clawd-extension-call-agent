@@ -37,9 +37,13 @@ export class CallManager {
 
   async startCall(request: CallRequest): Promise<{ call: CallRecord; start: TelephonyStartResult }> {
     const now = new Date().toISOString();
+    const occupiedTimeslots = request.occupiedTimeslots ?? request.occupied_timeslots;
+    const normalizedRequest: CallRequest = occupiedTimeslots
+      ? { ...request, occupiedTimeslots }
+      : request;
     const call: CallRecord = {
       id: randomUUID(),
-      request,
+      request: normalizedRequest,
       status: "queued",
       attempt: 0,
       createdAt: now,

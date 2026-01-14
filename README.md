@@ -1,6 +1,6 @@
 # Clawdbot Call Agent (Twilio + OpenAI Realtime)
 
-This plugin adds a `call_agent` tool that places a phone call via Twilio Media Streams, runs a realtime voice agent through OpenAI Realtime, and schedules an appointment by calling a calendar bridge.
+This plugin adds a `call_agent` tool that places a phone call via Twilio Media Streams, runs a realtime voice agent through OpenAI Realtime, and schedules an appointment using occupied timeslots supplied with the tool input (no standalone calendar server required).
 
 ## Install
 
@@ -35,10 +35,6 @@ Or load via `plugins.load.paths` and point at `src/index.ts`.
     "inputFormat": "audio/pcmu",
     "outputFormat": "audio/pcm",
     "outputSampleRate": 24000
-  },
-  "calendar": {
-    "baseUrl": "http://127.0.0.1:9100",
-    "token": "optional"
   },
   "notify": {
     "hooksUrl": "http://127.0.0.1:19000/hooks",
@@ -89,20 +85,14 @@ Expected HTTP endpoints:
 Purpose: Provide a Clawdbot plugin that places calls via a telephony provider, runs a realtime voice agent, and schedules appointments without calendar conflicts.
 
 Tools:
-- `call_agent` — starts a call. Inputs: `to`, `goal`, `durationMinutes`, optional `timezone`, `windowStart`, `windowEnd`, `workingHours`, `calendarId`, `userName`, `calleeName`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
+- `call_agent` — starts a call. Inputs: `to`, `goal`, `durationMinutes`, optional `timezone`, `windowStart`, `windowEnd`, `workingHours`, `calendarId`, `occupiedTimeslots` (or `occupied_timeslots`), `userName`, `calleeName`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
 - `call_agent_status` — returns status for a `callId`.
-
-Calendar bridge (provider-agnostic):
-- `POST /calendar/find-slots`
-- `POST /calendar/check-slot`
-- `POST /calendar/create-event`
-Payloads match `src/types.ts`. Responses must include `{ ok: true }` for success.
 
 Call flow:
 1) `call_agent` creates a call job and starts the provider.
 2) Provider hits `POST /voice` → plugin returns connect response to `/voice/stream`.
 3) `/voice/stream` streams mu-law audio between provider and OpenAI Realtime.
-4) Realtime model calls calendar tools via the HTTP bridge.
+4) Realtime model calls calendar tools backed by the provided occupied timeslots.
 5) On `calendar_create_event` success, plugin notifies user via `/hooks/agent` (if configured) and ends the call.
 
 Config keys:
@@ -110,20 +100,10 @@ Config keys:
 - `server.port`, `server.publicBaseUrl`
 - `twilio.*` (when using Twilio)
 - `openai.*` (Realtime model/voice/audio format)
-- `calendar.baseUrl` (+ optional token)
 - `notify.hooksUrl`, `notify.hooksToken`, `notify.sessionKey`
 - `defaults.timezone`, `defaults.workingHours`
 - `retry.*`, `tunnel.provider`
 
-## Calendar bridge contract
-
-The plugin does not manage providers directly. It calls a local calendar bridge that Clawdbot (or another service) implements:
-
-- `POST /calendar/find-slots`
-- `POST /calendar/check-slot`
-- `POST /calendar/create-event`
-
-Payloads match the tool schemas in `src/types.ts`. Responses should include `{ ok: true }` and relevant data.
 
 ## Tools
 

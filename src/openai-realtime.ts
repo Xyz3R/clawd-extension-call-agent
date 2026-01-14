@@ -1,19 +1,13 @@
 import WebSocket from "ws";
 import { PluginConfig } from "./config.js";
-import {
-  CalendarCheckSlotRequest,
-  CalendarCreateEventRequest,
-  CalendarFindSlotsRequest,
-  CallRecord
-} from "./types.js";
-import { CalendarClient } from "./calendar-client.js";
+import { CalendarCheckSlotRequest, CalendarCreateEventRequest, CalendarFindSlotsRequest, CallRecord } from "./types.js";
+import { CalendarEngine } from "./calendar-engine.js";
 
 const OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime";
 
 export type RealtimeDeps = {
   config: PluginConfig;
   call: CallRecord;
-  calendar: CalendarClient;
   onScheduled: (call: CallRecord) => void;
   onSpeechStarted?: () => void;
   onAudioDelta?: (audioBase64: string) => void;
@@ -25,9 +19,11 @@ export class OpenAIRealtimeSession {
   private deps: RealtimeDeps;
   private closed = false;
   private responsePending = false;
+  private calendar: CalendarEngine;
 
   constructor(deps: RealtimeDeps) {
     this.deps = deps;
+    this.calendar = new CalendarEngine(deps.call);
   }
 
   connect(): void {
@@ -75,6 +71,8 @@ export class OpenAIRealtimeSession {
     const timezone = call.request.timezone ?? this.deps.config.defaults.timezone ?? "";
     const workingHours = call.request.workingHours ?? this.deps.config.defaults.workingHours;
     const calendarId = call.request.calendarId ?? "primary";
+    const currentDateTime = formatCurrentDateTime(timezone);
+    const occupiedSlotsText = formatOccupiedSlots(this.calendar.getOccupiedTimeslots());
 
     const instructions = [
       "You are a phone call assistant working on behalf of the user.",
@@ -85,9 +83,12 @@ export class OpenAIRealtimeSession {
       "If unavailable, use calendar_find_slots to propose alternatives.",
       "When the callee confirms, call calendar_create_event immediately.",
       "After calendar_create_event succeeds, confirm the appointment and politely end the call.",
+      "Use the occupied calendar slots provided as the source of truth for availability.",
       "Do not schedule outside business hours unless the callee explicitly requests it.",
       `Business hours: ${workingHours.start}-${workingHours.end} on days ${workingHours.days.join(",")}.`,
       timezone ? `Timezone: ${timezone}.` : "",
+      currentDateTime ? `Current date/time: ${currentDateTime}.` : "",
+      occupiedSlotsText ? `Occupied calendar slots: ${occupiedSlotsText}.` : "",
       call.request.windowStart && call.request.windowEnd
         ? `Scheduling window: ${call.request.windowStart} to ${call.request.windowEnd}.`
         : "",
@@ -101,7 +102,7 @@ export class OpenAIRealtimeSession {
       {
         type: "function",
         name: "calendar_find_slots",
-        description: "Find available time slots that satisfy business hours and duration.",
+        description: "Find available time slots that satisfy business hours and duration, based on occupied slots.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -130,7 +131,7 @@ export class OpenAIRealtimeSession {
       {
         type: "function",
         name: "calendar_check_slot",
-        description: "Check if a proposed slot conflicts with the user's calendar.",
+        description: "Check if a proposed slot conflicts with the occupied calendar slots.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -148,7 +149,7 @@ export class OpenAIRealtimeSession {
       {
         type: "function",
         name: "calendar_create_event",
-        description: "Create a calendar event after the callee confirms the time.",
+        description: "Create (record) a calendar event after the callee confirms the time.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -299,11 +300,11 @@ export class OpenAIRealtimeSession {
     let result: unknown;
     try {
       if (name === "calendar_find_slots") {
-        result = await this.deps.calendar.findSlots(args as CalendarFindSlotsRequest);
+        result = this.calendar.findSlots(args as CalendarFindSlotsRequest);
       } else if (name === "calendar_check_slot") {
-        result = await this.deps.calendar.checkSlot(args as CalendarCheckSlotRequest);
+        result = this.calendar.checkSlot(args as CalendarCheckSlotRequest);
       } else if (name === "calendar_create_event") {
-        const created = await this.deps.calendar.createEvent(args as CalendarCreateEventRequest);
+        const created = this.calendar.createEvent(args as CalendarCreateEventRequest);
         result = created;
         if (created.ok && created.eventId && created.start && created.end && created.timezone) {
           this.deps.call.scheduledEvent = {
@@ -355,6 +356,36 @@ export class OpenAIRealtimeSession {
     if (this.closed) return;
     this.ws?.send(JSON.stringify(payload));
   }
+}
+
+function formatCurrentDateTime(timezone?: string): string | null {
+  const now = new Date();
+  if (!timezone) {
+    return now.toISOString();
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }).formatToParts(now);
+    const lookup = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+    const date = `${lookup("year")}-${lookup("month")}-${lookup("day")}`;
+    const time = `${lookup("hour")}:${lookup("minute")}:${lookup("second")}`;
+    return `${date} ${time} (${timezone})`;
+  } catch {
+    return now.toISOString();
+  }
+}
+
+function formatOccupiedSlots(slots: { start: string; end: string }[]): string | null {
+  if (!slots.length) return "none";
+  return slots.map((slot) => `${slot.start} to ${slot.end}`).join("; ");
 }
 
 function downsamplePcm24To8(buf: Buffer): Buffer {

@@ -23,10 +23,6 @@ export type PluginConfig = {
     outputFormat: "audio/pcmu" | "audio/pcma" | "audio/pcm";
     outputSampleRate: number;
   };
-  calendar: {
-    baseUrl: string;
-    token?: string;
-  };
   notify: {
     hooksUrl?: string;
     hooksToken?: string;
@@ -69,9 +65,6 @@ export const defaultConfig: PluginConfig = {
     outputFormat: "audio/pcm",
     outputSampleRate: 24000
   },
-  calendar: {
-    baseUrl: "http://127.0.0.1:9100"
-  },
   notify: {},
   retry: {
     maxAttempts: 3,
@@ -95,7 +88,6 @@ export function parseConfig(raw: Partial<PluginConfig> | undefined): PluginConfi
   cfg.telephony = { ...cfg.telephony, ...raw.telephony };
   cfg.twilio = { ...cfg.twilio, ...raw.twilio };
   cfg.openai = { ...cfg.openai, ...raw.openai };
-  cfg.calendar = { ...cfg.calendar, ...raw.calendar };
   cfg.notify = { ...cfg.notify, ...raw.notify };
   cfg.retry = { ...cfg.retry, ...raw.retry };
   cfg.defaults = { ...cfg.defaults, ...raw.defaults };

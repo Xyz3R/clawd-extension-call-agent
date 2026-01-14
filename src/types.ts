@@ -13,6 +13,8 @@ export type CallRequest = {
   windowEnd?: string;   // RFC3339
   workingHours?: WorkingHours;
   calendarId?: string;
+  occupiedTimeslots?: CalendarSlot[];
+  occupied_timeslots?: CalendarSlot[];
   userName?: string;
   calleeName?: string;
 };

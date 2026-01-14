@@ -1,7 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { parseConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
-import { CalendarClient } from "./calendar-client.js";
 import { CallAgentServer } from "./server.js";
 import { CallRequest } from "./types.js";
 import { createTelephonyProvider } from "./telephony.js";
@@ -21,6 +20,22 @@ const CallAgentInput = Type.Object({
     })
   ),
   calendarId: Type.Optional(Type.String()),
+  occupiedTimeslots: Type.Optional(
+    Type.Array(
+      Type.Object({
+        start: Type.String({ description: "RFC3339 start time" }),
+        end: Type.String({ description: "RFC3339 end time" })
+      })
+    )
+  ),
+  occupied_timeslots: Type.Optional(
+    Type.Array(
+      Type.Object({
+        start: Type.String({ description: "RFC3339 start time" }),
+        end: Type.String({ description: "RFC3339 end time" })
+      })
+    )
+  ),
   userName: Type.Optional(Type.String()),
   calleeName: Type.Optional(Type.String())
 });
@@ -39,7 +54,6 @@ export default {
     const config = parseConfig(api?.config ?? {});
     const logger = api?.logger ?? console;
 
-    const calendar = new CalendarClient(config);
     const telephony = createTelephonyProvider(config);
     let server!: CallAgentServer;
     const callManager = new CallManager({
@@ -52,7 +66,6 @@ export default {
     server = new CallAgentServer({
       config,
       callManager,
-      calendar,
       telephony,
       logger
     });

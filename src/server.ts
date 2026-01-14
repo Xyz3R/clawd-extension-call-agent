@@ -3,7 +3,6 @@ import express from "express";
 import WebSocket, { WebSocketServer } from "ws";
 import { PluginConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
-import { CalendarClient } from "./calendar-client.js";
 import { OpenAIRealtimeSession } from "./openai-realtime.js";
 import { CallRecord } from "./types.js";
 import { ensurePublicUrl, TunnelInfo } from "./tunnel.js";
@@ -12,7 +11,6 @@ import type { TelephonyProvider } from "./telephony.js";
 export type CallAgentServerDeps = {
   config: PluginConfig;
   callManager: CallManager;
-  calendar: CalendarClient;
   telephony: TelephonyProvider;
   logger: { info: (...args: any[]) => void; warn: (...args: any[]) => void; error: (...args: any[]) => void };
 };
@@ -138,7 +136,6 @@ export class CallAgentServer {
         const session = new OpenAIRealtimeSession({
           config: this.deps.config,
           call,
-          calendar: this.deps.calendar,
           onScheduled: (updated) => this.handleScheduled(updated),
           onSpeechStarted: () => {
             if (call.streamSid) {
