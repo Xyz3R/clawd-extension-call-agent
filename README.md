@@ -1,3 +1,5 @@
+# Disclaimer: heavy WIP
+
 # Clawdbot Call Agent (Twilio + OpenAI Realtime)
 
 This plugin adds a `call_agent` tool that places a phone call via Twilio Media Streams, runs a realtime voice agent through OpenAI Realtime, and schedules an appointment using occupied timeslots supplied with the tool input (no standalone calendar server required).
