@@ -1,0 +1,106 @@
+export type PluginConfig = {
+  telephony: {
+    provider: "twilio" | "mock";
+  };
+  server: {
+    port: number;
+    publicBaseUrl?: string;
+  };
+  twilio: {
+    accountSid: string;
+    authToken: string;
+    fromNumber: string;
+    validateSignature: boolean;
+  };
+  mock?: {
+    enabled?: boolean;
+  };
+  openai: {
+    apiKey: string;
+    model: string;
+    voice: string;
+    inputFormat: "audio/pcmu" | "audio/pcma" | "audio/pcm";
+    outputFormat: "audio/pcmu" | "audio/pcma" | "audio/pcm";
+    outputSampleRate: number;
+  };
+  calendar: {
+    baseUrl: string;
+    token?: string;
+  };
+  notify: {
+    hooksUrl?: string;
+    hooksToken?: string;
+    sessionKey?: string;
+  };
+  retry: {
+    maxAttempts: number;
+    initialDelayMs: number;
+    backoffFactor: number;
+    retryStatuses: string[];
+  };
+  defaults: {
+    timezone?: string;
+    workingHours: { start: string; end: string; days: number[] };
+  };
+  tunnel: {
+    provider: "auto" | "ngrok" | "tailscale" | "none";
+  };
+};
+
+export const defaultConfig: PluginConfig = {
+  telephony: {
+    provider: "twilio"
+  },
+  server: {
+    port: 4545
+  },
+  twilio: {
+    accountSid: "",
+    authToken: "",
+    fromNumber: "",
+    validateSignature: true
+  },
+  mock: {},
+  openai: {
+    apiKey: "",
+    model: "gpt-4o-realtime-preview",
+    voice: "alloy",
+    inputFormat: "audio/pcmu",
+    outputFormat: "audio/pcm",
+    outputSampleRate: 24000
+  },
+  calendar: {
+    baseUrl: "http://127.0.0.1:9100"
+  },
+  notify: {},
+  retry: {
+    maxAttempts: 3,
+    initialDelayMs: 60_000,
+    backoffFactor: 2,
+    retryStatuses: ["busy", "no-answer", "failed"]
+  },
+  defaults: {
+    workingHours: { start: "09:00", end: "17:00", days: [1, 2, 3, 4, 5] }
+  },
+  tunnel: {
+    provider: "auto"
+  }
+};
+
+export function parseConfig(raw: Partial<PluginConfig> | undefined): PluginConfig {
+  const cfg = structuredClone(defaultConfig);
+  if (!raw) return cfg;
+
+  cfg.server = { ...cfg.server, ...raw.server };
+  cfg.telephony = { ...cfg.telephony, ...raw.telephony };
+  cfg.twilio = { ...cfg.twilio, ...raw.twilio };
+  cfg.openai = { ...cfg.openai, ...raw.openai };
+  cfg.calendar = { ...cfg.calendar, ...raw.calendar };
+  cfg.notify = { ...cfg.notify, ...raw.notify };
+  cfg.retry = { ...cfg.retry, ...raw.retry };
+  cfg.defaults = { ...cfg.defaults, ...raw.defaults };
+  cfg.tunnel = { ...cfg.tunnel, ...raw.tunnel };
+  cfg.mock = { ...cfg.mock, ...raw.mock };
+
+  return cfg;
+}

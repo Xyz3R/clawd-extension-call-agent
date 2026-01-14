@@ -1,0 +1,28 @@
+{
+  "name": "clawdbot-call-agent",
+  "version": "0.1.0",
+  "description": "Clawdbot call-agent plugin using Twilio Media Streams + OpenAI Realtime",
+  "type": "module",
+  "main": "src/index.ts",
+  "clawdbot": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "mock:call": "bash -lc \"set -a; source .env; set +a; AUTO_CALL=1 TELEPHONY_PROVIDER=mock npx -y tsx scripts/dev-runner.ts\""
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.13",
+    "express": "^4.19.2",
+    "twilio": "^5.4.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.8"
+  }
+}
