@@ -37,7 +37,7 @@ if (!config.openai.apiKey) {
 }
 
 const callPrompt =
-  process.env.CALL_PROMPT ??
+  process.env.CALL_GOAL ??
   "Call the business, ask for their current hours, and confirm whether walk-ins are accepted today. Be polite and concise.";
 
 const telephony = createTelephonyProvider(config);
@@ -59,7 +59,7 @@ server = new CallAgentServer({
 
 await server.start();
 logger.info(`Call agent server up on http://127.0.0.1:${port}`);
-logger.info(`Call prompt: ${callPrompt}`);
+logger.info(`Call Goal: ${callPrompt}`);
 
 if (process.env.AUTO_CALL === "1") {
   const req: CallRequest = {
@@ -80,4 +80,4 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-console.log(`Prompt: ${process.env.CALL_PROMPT ?? ""}`);
+console.log(`Prompt: ${process.env.CALL_GOAL ?? ""}`);
