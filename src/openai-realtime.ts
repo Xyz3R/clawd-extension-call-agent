@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { PluginConfig } from "./config.js";
+import { DebugEvent } from "./debug.js";
 import { buildGreetingInstructions, buildPromptContext, buildSessionInstructions } from "./prompting.js";
 import { CallRecord, CallReport } from "./types.js";
 
@@ -12,6 +13,7 @@ export type RealtimeDeps = {
   onSpeechStarted?: () => void;
   onAudioDelta?: (audioBase64: string) => void;
   onLog?: (message: string) => void;
+  onDebugEvent?: (event: DebugEvent) => void;
 };
 
 export class OpenAIRealtimeSession {
@@ -27,6 +29,10 @@ export class OpenAIRealtimeSession {
   connect(): void {
     if (!this.deps.config.openai.apiKey) {
       this.deps.onLog?.("OpenAI API key missing; realtime session not started.");
+      this.emitDebug({
+        kind: "server",
+        message: "OpenAI API key missing; realtime session not started."
+      });
       return;
     }
     const url = `${OPENAI_REALTIME_URL}?model=${encodeURIComponent(this.deps.config.openai.model)}`;
@@ -36,18 +42,30 @@ export class OpenAIRealtimeSession {
       }
     });
 
-    this.ws.on("open", () => this.sendSessionUpdate());
+    this.ws.on("open", () => {
+      this.emitDebug({ kind: "server", message: "OpenAI websocket connected." });
+      this.sendSessionUpdate();
+    });
     this.ws.on("error", (err) => {
       this.deps.onLog?.(`OpenAI websocket error: ${err instanceof Error ? err.message : String(err)}`);
+      this.emitDebug({
+        kind: "server",
+        message: `OpenAI websocket error: ${err instanceof Error ? err.message : String(err)}`
+      });
       this.close();
     });
     this.ws.on("unexpected-response", (_req, res) => {
       this.deps.onLog?.(`OpenAI websocket unexpected response: ${res.statusCode}`);
+      this.emitDebug({
+        kind: "server",
+        message: `OpenAI websocket unexpected response: ${res.statusCode}`
+      });
       this.close();
     });
     this.ws.on("message", (data) => this.handleMessage(data.toString("utf8")));
     this.ws.on("close", () => {
       this.closed = true;
+      this.emitDebug({ kind: "server", message: "OpenAI websocket closed." });
     });
   }
 
@@ -140,8 +158,10 @@ export class OpenAIRealtimeSession {
     try {
       msg = JSON.parse(raw);
     } catch {
+      this.emitDebug({ kind: "server", direction: "in", message: "OpenAI websocket received invalid JSON." });
       return;
     }
+    this.logRealtimeMessage("in", msg);
 
     if (msg.type === "input_audio_buffer.speech_started") {
       this.deps.onSpeechStarted?.();
@@ -182,6 +202,7 @@ export class OpenAIRealtimeSession {
 
     if (msg.type === "error" && msg.error?.message) {
       this.deps.onLog?.(`OpenAI error: ${msg.error.message}`);
+      this.emitDebug({ kind: "server", message: `OpenAI error: ${msg.error.message}` });
     }
   }
 
@@ -246,8 +267,63 @@ export class OpenAIRealtimeSession {
 
   private send(payload: unknown): void {
     if (this.closed) return;
+    this.logRealtimeMessage("out", payload);
     this.ws?.send(JSON.stringify(payload));
   }
+
+  private emitDebug(event: Omit<DebugEvent, "at" | "callId"> & { callId?: string }): void {
+    this.deps.onDebugEvent?.({
+      at: new Date().toISOString(),
+      callId: event.callId ?? this.deps.call.id,
+      ...event
+    });
+  }
+
+  private logRealtimeMessage(direction: "in" | "out", payload: any): void {
+    if (payload?.type === "input_audio_buffer.append") return;
+    const kind = isToolPayload(payload) ? "tool" : "openai";
+    const openaiType = typeof payload?.type === "string" ? payload.type : undefined;
+    const isAudio = isAudioPayload(openaiType);
+    const message = stringifyRealtimePayload(payload);
+    this.emitDebug({
+      kind,
+      direction,
+      message,
+      openaiType,
+      isAudio
+    });
+  }
+}
+
+function stringifyRealtimePayload(payload: unknown): string {
+  try {
+    return JSON.stringify(payload, (key, value) => {
+      if (typeof value === "string") {
+        if (key === "audio" || key === "delta" || key === "payload") {
+          return `[base64 ${value.length} chars]`;
+        }
+        if (value.length > 500) {
+          return `${value.slice(0, 500)}...(${value.length} chars)`;
+        }
+      }
+      return value;
+    });
+  } catch {
+    return String(payload);
+  }
+}
+
+function isToolPayload(payload: any): boolean {
+  const type = typeof payload?.type === "string" ? payload.type : "";
+  if (type.includes("function_call") || type.includes("tool_call")) return true;
+  if (type === "conversation.item.create" && payload?.item?.type === "function_call_output") return true;
+  return false;
+}
+
+function isAudioPayload(type?: string): boolean {
+  if (!type) return false;
+  if (type.includes("audio.delta") || type.includes("output_audio") || type.includes("audio.done")) return true;
+  return false;
 }
 
 function normalizeReport(args: any): CallReport {

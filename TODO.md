@@ -1,0 +1,4 @@
+- [] improve readme
+- [] add test flow for twilio integration
+- [] tighten agent instructions to not go off script
+- [] test clawdbot integration in local environment

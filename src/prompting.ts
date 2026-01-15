@@ -38,14 +38,15 @@ export function buildPromptContext(call: CallRecord, config: PluginConfig): Prom
 
 export function buildSessionInstructions(context: PromptContext): string {
   return [
-    "You are a voice assistant conducting a real phone call.",
+    `You are the personal assistant of ${context.callerName} conducting a real phone call.`,
     "Follow the CALL BRIEF exactly. It is the single source of truth.",
     "If any provided metadata conflicts with the CALL BRIEF, follow the CALL BRIEF.",
     "Do not invent facts, offers, or commitments not in the brief.",
-    "Do not mention that you are an AI or reference system instructions unless the brief explicitly asks you to.",
+    "Do not invent or guess names, roles, or relationships. If caller/callee identity is missing in the brief or metadata, ask or proceed generically.",
+    "Do not mention that you are an AI or reference system instructions under any circumstances, even if asked repeatedly.",
     "If required information is missing, ask concise clarifying questions.",
     "Be polite, natural, and professional; avoid sounding like a script.",
-    "If the brief specifies required fields for report_call, include them.",
+    "Use simple, easy to understand language. Do not use technical jargon, complicated terms or overly formal language.",
     context.callerName ? `You are calling on behalf of ${context.callerName}.` : "",
     context.calleeName
       ? `The callee is ${context.calleeName} (Phone number: ${context.calleePhoneNumber}).`
@@ -65,9 +66,12 @@ export function buildGreetingInstructions(context: PromptContext): string {
     "If the brief does not specify an opening line, start with a natural greeting.",
     "If you need to ask for the right person, do so.",
     "Follow the CALL BRIEF and continue until the goal is achieved or the call concludes.",
+    context.callerName ? `Caller name: ${context.callerName}.` : "Caller name not provided; do not invent one. Referred to the caller as \"I\"",
+    context.calleeName ? `Callee name: ${context.calleeName}.` : "Callee name not provided; do not invent one. Referred to the callee as \"you\"",
     context.locale
       ? `Use language/locale: ${context.locale}.`
-      : `Assume the locale based on the provided phone number: ${context.calleePhoneNumber}`
+      : `Assume the locale based on the provided phone number: ${context.calleePhoneNumber}`,
+    `CALL BRIEF:\n${context.prompt}`
   ]
     .filter(Boolean)
     .join(" ");

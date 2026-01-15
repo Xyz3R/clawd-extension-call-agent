@@ -3,6 +3,7 @@ import express from "express";
 import WebSocket, { WebSocketServer } from "ws";
 import { PluginConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
+import { DebugEvent } from "./debug.js";
 import { OpenAIRealtimeSession } from "./openai-realtime.js";
 import { CallRecord, CallReport } from "./types.js";
 import { ensurePublicUrl, TunnelInfo } from "./tunnel.js";
@@ -20,9 +21,11 @@ export class CallAgentServer {
   private app = express();
   private server?: http.Server;
   private wss?: WebSocketServer;
+  private logWss?: WebSocketServer;
   private tunnel?: TunnelInfo;
   private publicBaseUrl?: string;
   private sessions = new Map<string, OpenAIRealtimeSession>();
+  private logClients = new Set<WebSocket>();
   private telephony: TelephonyProvider;
 
   constructor(deps: CallAgentServerDeps) {
@@ -62,8 +65,29 @@ export class CallAgentServer {
     );
 
     this.server = http.createServer(this.app);
-    this.wss = new WebSocketServer({ server: this.server, path: "/voice/stream" });
+    this.wss = new WebSocketServer({ noServer: true });
     this.wss.on("connection", (socket) => this.handleVoiceStream(socket));
+    this.logWss = new WebSocketServer({ noServer: true });
+    this.logWss.on("connection", (socket) => this.handleLogStream(socket));
+    this.logWss.on("error", (err) => {
+      this.deps.logger.warn(`log stream websocket error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+    this.server.on("upgrade", (req, socket, head) => {
+      const pathname = (req.url ?? "").split("?")[0];
+      if (pathname === "/voice/stream") {
+        this.wss?.handleUpgrade(req, socket, head, (ws) => {
+          this.wss?.emit("connection", ws, req);
+        });
+        return;
+      }
+      if (pathname === "/mock/logs") {
+        this.logWss?.handleUpgrade(req, socket, head, (ws) => {
+          this.logWss?.emit("connection", ws, req);
+        });
+        return;
+      }
+      socket.destroy();
+    });
 
     await new Promise<void>((resolve) => this.server?.listen(this.deps.config.server.port, resolve));
 
@@ -93,6 +117,8 @@ export class CallAgentServer {
     for (const session of this.sessions.values()) session.close();
     this.sessions.clear();
     await new Promise<void>((resolve) => this.server?.close(() => resolve()));
+    this.wss?.close();
+    this.logWss?.close();
     this.tunnel?.process?.kill();
   }
 
@@ -113,11 +139,20 @@ export class CallAgentServer {
   }
 
   private handleVoiceStream(socket: WebSocket): void {
+    this.emitDebug({ kind: "server", message: "Voice stream websocket connected." });
+    socket.on("close", () => {
+      this.emitDebug({ kind: "server", message: "Voice stream websocket closed." });
+    });
     socket.on("message", (data) => {
       let msg: any;
       try {
         msg = JSON.parse(data.toString("utf8"));
       } catch {
+        this.emitDebug({
+          kind: "server",
+          direction: "in",
+          message: "Voice stream received invalid JSON."
+        });
         return;
       }
 
@@ -126,10 +161,20 @@ export class CallAgentServer {
         const call = this.deps.callManager.get(callId);
         if (!call) {
           this.deps.logger.warn("voice stream start for unknown call", callId);
+          this.emitDebug({
+            kind: "server",
+            callId,
+            message: `Voice stream start for unknown call ${callId || "(missing callId)"}.`
+          });
           socket.close();
           return;
         }
         this.deps.logger.info("voice stream start", callId);
+        this.emitDebug({
+          kind: "server",
+          callId,
+          message: "Voice stream start received."
+        });
         call.streamSid = msg.start?.streamSid;
         call.status = "in_progress";
 
@@ -153,11 +198,16 @@ export class CallAgentServer {
               );
             }
           },
-          onLog: (text) => this.deps.logger.warn(text)
+          onLog: (text) => {
+            this.deps.logger.warn(text);
+            this.emitDebug({ kind: "server", callId, message: text });
+          },
+          onDebugEvent: (event) => this.emitDebug(event)
         });
 
         this.sessions.set(call.streamSid ?? call.id, session);
         session.connect();
+        this.emitDebug({ kind: "server", callId, message: "OpenAI realtime session connecting." });
         return;
       }
 
@@ -175,8 +225,25 @@ export class CallAgentServer {
         const session = this.sessions.get(streamSid);
         session?.close();
         this.sessions.delete(streamSid);
+        this.emitDebug({ kind: "server", message: `Voice stream stopped (${streamSid}).` });
       }
     });
+  }
+
+  private handleLogStream(socket: WebSocket): void {
+    this.logClients.add(socket);
+    socket.on("close", () => this.logClients.delete(socket));
+  }
+
+  private emitDebug(event: DebugEvent): void {
+    const payload = JSON.stringify(event);
+    for (const socket of this.logClients) {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(payload);
+      } else if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+        this.logClients.delete(socket);
+      }
+    }
   }
 
   private async handleReport(call: CallRecord, report: CallReport): Promise<void> {
