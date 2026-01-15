@@ -23,7 +23,7 @@ export type RealtimeDeps = {
   call: CallRecord;
   onReport?: (call: CallRecord, report: CallReport) => void;
   onSpeechStarted?: () => void;
-  onAudioDelta?: (audioBase64: string) => void;
+  onAudioDelta?: (audio: ArrayBuffer, format: OutputFormat) => void;
   onLog?: (message: string) => void;
   onDebugEvent?: (event: DebugEvent) => void;
 };
@@ -338,24 +338,8 @@ export class OpenAIRealtimeSession {
   }
 
   private handleAudio(event: TransportLayerAudio): void {
-    const audio = this.encodeAudio(event.data);
-    if (audio) this.deps.onAudioDelta?.(audio);
-  }
-
-  private encodeAudio(data: ArrayBuffer): string | null {
-    if (this.outputFormat.type === "audio/pcmu") {
-      return utils.arrayBufferToBase64(data);
-    }
-
-    try {
-      const pcm = Buffer.from(data);
-      const downsampled = downsamplePcm24To8(pcm);
-      const ulaw = encodeMuLaw(downsampled);
-      return ulaw.toString("base64");
-    } catch (err: any) {
-      this.deps.onLog?.(`Audio transcode failed: ${err?.message ?? "unknown"}`);
-      return null;
-    }
+    if (!this.deps.onAudioDelta) return;
+    this.deps.onAudioDelta(event.data, this.outputFormat);
   }
 
   private emitDebug(event: Omit<DebugEvent, "at" | "callId"> & { callId?: string }): void {
@@ -465,44 +449,4 @@ function extractReportData(args: any): Record<string, unknown> | undefined {
     cleaned[key] = rest[key];
   }
   return cleaned;
-}
-
-function downsamplePcm24To8(buf: Buffer): Buffer {
-  // Input: 16-bit little-endian PCM @ 24kHz. Output: 16-bit PCM @ 8kHz.
-  const samples = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
-  const outLen = Math.floor(samples.length / 3);
-  const out = new Int16Array(outLen);
-  let j = 0;
-  for (let i = 0; i < samples.length - 2; i += 3) {
-    out[j++] = samples[i];
-  }
-  return Buffer.from(out.buffer);
-}
-
-function encodeMuLaw(buf: Buffer): Buffer {
-  const samples = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
-  const out = Buffer.alloc(samples.length);
-  for (let i = 0; i < samples.length; i += 1) {
-    out[i] = linearToMuLawSample(samples[i]);
-  }
-  return out;
-}
-
-function linearToMuLawSample(sample: number): number {
-  const MU_LAW_MAX = 0x1fff;
-  const BIAS = 0x84;
-  let sign = 0;
-  if (sample < 0) {
-    sign = 0x80;
-    sample = -sample;
-  }
-  if (sample > MU_LAW_MAX) sample = MU_LAW_MAX;
-  sample += BIAS;
-
-  let exponent = 7;
-  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) {
-    exponent -= 1;
-  }
-  const mantissa = (sample >> (exponent + 3)) & 0x0f;
-  return (~(sign | (exponent << 4) | mantissa)) & 0xff;
 }

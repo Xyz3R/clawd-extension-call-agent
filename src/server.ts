@@ -5,6 +5,7 @@ import { PluginConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
 import { DebugEvent } from "./debug.js";
 import { OpenAIRealtimeSession } from "./openai-realtime.js";
+import { transcodePcm24ToPcmu8 } from "./audio.js";
 import { CallRecord, CallReport } from "./types.js";
 import { ensurePublicUrl, TunnelInfo } from "./tunnel.js";
 import type { TelephonyProvider } from "./telephony.js";
@@ -187,15 +188,24 @@ export class CallAgentServer {
               socket.send(JSON.stringify({ event: "clear", streamSid: call.streamSid }));
             }
           },
-          onAudioDelta: (audio) => {
-            if (call.streamSid) {
+          onAudioDelta: (audio, format) => {
+            if (!call.streamSid) return;
+            try {
+              const payload =
+                format.type === "audio/pcmu"
+                  ? Buffer.from(audio).toString("base64")
+                  : transcodePcm24ToPcmu8(Buffer.from(audio)).toString("base64");
               socket.send(
                 JSON.stringify({
                   event: "media",
                   streamSid: call.streamSid,
-                  media: { payload: audio }
+                  media: { payload }
                 })
               );
+            } catch (err) {
+              const message = `Twilio audio transcode failed: ${err instanceof Error ? err.message : String(err)}`;
+              this.deps.logger.warn(message);
+              this.emitDebug({ kind: "server", callId, message });
             }
           },
           onLog: (text) => {

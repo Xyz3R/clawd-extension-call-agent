@@ -23,6 +23,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "twilio": "^5.4.0",
+    "wavefile": "^11.0.0",
     "ws": "^8.18.1"
   },
   "devDependencies": {

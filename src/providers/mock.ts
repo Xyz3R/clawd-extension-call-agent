@@ -97,6 +97,7 @@ function buildMockHtml(baseUrl: string): string {
   const baseUrl = ${JSON.stringify(baseUrl)};
   const origin = (location.origin && location.origin !== 'null') ? location.origin : baseUrl;
   const wsBase = origin.replace('http://', 'ws://').replace('https://', 'wss://');
+  const TARGET_SAMPLE_RATE = 8000;
   const callIdInput = document.getElementById('callId');
   const statusEl = document.getElementById('status');
   const logEl = document.getElementById('log');
@@ -255,6 +256,7 @@ function buildMockHtml(baseUrl: string): string {
   let playHead = 0;
   const activeNodes = new Set();
   let silenceGain;
+  let usesNative8k = false;
 
   function muLawEncodeSample(sample) {
     const MU_LAW_MAX = 0x1fff;
@@ -281,22 +283,12 @@ function buildMockHtml(baseUrl: string): string {
   }
 
   function downsampleTo8k(input, inputRate) {
-    const ratio = inputRate / 8000;
+    const ratio = inputRate / TARGET_SAMPLE_RATE;
     const outLen = Math.floor(input.length / ratio);
     const out = new Int16Array(outLen);
     for (let i = 0; i < outLen; i++) {
-      out[i] = input[Math.floor(i * ratio)] * 0x7fff;
-    }
-    return out;
-  }
-
-  function upsampleFrom8k(input, outputRate) {
-    const ratio = outputRate / 8000;
-    const outLen = Math.floor(input.length * ratio);
-    const out = new Float32Array(outLen);
-    for (let i = 0; i < outLen; i++) {
-      const srcIndex = Math.min(input.length - 1, Math.floor(i / ratio));
-      out[i] = input[srcIndex] / 0x7fff;
+      const sample = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)]));
+      out[i] = Math.round(sample * 0x7fff);
     }
     return out;
   }
@@ -321,7 +313,11 @@ function buildMockHtml(baseUrl: string): string {
       }));
       log('sent start for call ' + callId);
 
-      audioCtx = new AudioContext();
+      audioCtx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE, latencyHint: 'interactive' });
+      usesNative8k = audioCtx.sampleRate === TARGET_SAMPLE_RATE;
+      if (!usesNative8k) {
+        log('Warning: browser did not honor 8kHz AudioContext; falling back to manual downsampling.');
+      }
       inputStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -335,9 +331,16 @@ function buildMockHtml(baseUrl: string): string {
       scriptNode.onaudioprocess = (event) => {
         if (!ws || ws.readyState !== 1) return;
         const input = event.inputBuffer.getChannelData(0);
-        const down = downsampleTo8k(input, audioCtx.sampleRate);
-        const ulaw = new Uint8Array(down.length);
-        for (let i = 0; i < down.length; i++) ulaw[i] = muLawEncodeSample(down[i]);
+        const pcm = usesNative8k ? null : downsampleTo8k(input, audioCtx.sampleRate);
+        const ulaw = new Uint8Array(usesNative8k ? input.length : pcm.length);
+        if (usesNative8k) {
+          for (let i = 0; i < input.length; i++) {
+            const sample = Math.max(-1, Math.min(1, input[i]));
+            ulaw[i] = muLawEncodeSample(Math.round(sample * 0x7fff));
+          }
+        } else {
+          for (let i = 0; i < pcm.length; i++) ulaw[i] = muLawEncodeSample(pcm[i]);
+        }
         const payload = btoa(String.fromCharCode(...ulaw));
         ws.send(JSON.stringify({
           event: 'media',
@@ -362,8 +365,9 @@ function buildMockHtml(baseUrl: string): string {
         for (let i = 0; i < bin.length; i++) ulaw[i] = bin.charCodeAt(i);
         const pcm = new Int16Array(ulaw.length);
         for (let i = 0; i < ulaw.length; i++) pcm[i] = muLawDecodeSample(ulaw[i]);
-        const floatSamples = upsampleFrom8k(pcm, audioCtx.sampleRate);
-        const buffer = audioCtx.createBuffer(1, floatSamples.length, audioCtx.sampleRate);
+        const floatSamples = new Float32Array(pcm.length);
+        for (let i = 0; i < pcm.length; i++) floatSamples[i] = pcm[i] / 0x7fff;
+        const buffer = audioCtx.createBuffer(1, floatSamples.length, TARGET_SAMPLE_RATE);
         buffer.getChannelData(0).set(floatSamples);
         const node = audioCtx.createBufferSource();
         node.buffer = buffer;
