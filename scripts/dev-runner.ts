@@ -18,7 +18,7 @@ const config = parseConfig({
   server: { port, publicBaseUrl: process.env.PUBLIC_BASE_URL },
   openai: {
     apiKey: process.env.OPENAI_API_KEY ?? "",
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-realtime-preview",
+    model: process.env.OPENAI_MODEL ?? "gpt-realtime",
     voice: process.env.OPENAI_VOICE ?? "alloy",
     inputFormat:
       (process.env.OPENAI_INPUT_FORMAT as "audio/pcmu" | "audio/pcma" | "audio/pcm") ?? "audio/pcmu",

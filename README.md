@@ -32,7 +32,7 @@ Or load via `plugins.load.paths` and point at `src/index.ts`.
   },
   "openai": {
     "apiKey": "sk-...",
-    "model": "gpt-4o-realtime-preview",
+    "model": "gpt-realtime",
     "voice": "alloy",
     "inputFormat": "audio/pcmu",
     "outputFormat": "audio/pcm",

@@ -59,7 +59,7 @@ export const defaultConfig: PluginConfig = {
   mock: {},
   openai: {
     apiKey: "",
-    model: "gpt-4o-realtime-preview",
+    model: "gpt-realtime",
     voice: "alloy",
     inputFormat: "audio/pcmu",
     outputFormat: "audio/pcm",
