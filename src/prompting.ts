@@ -37,8 +37,29 @@ export function buildPromptContext(call: CallRecord, config: PluginConfig): Prom
 }
 
 export function buildSessionInstructions(context: PromptContext): string {
+  const callerName = context.callerName ?? "the caller";
+  return `You are the personal assistant of ${callerName} conducting a real phone call.`;
+}
+
+export function buildGreetingInstructions(context: PromptContext): string {
   return [
-    `You are the personal assistant of ${context.callerName} conducting a real phone call.`,
+    "Begin the call according to the CALL BRIEF.",
+    "If the brief does not specify an opening line, start with a natural greeting.",
+    "If you need to ask for the right person, do so.",
+    "Follow the CALL BRIEF and continue until the goal is achieved or the call concludes.",
+    context.callerName ? `Caller name: Personal assistant of ${context.callerName}.` : "Caller name not provided; do not invent one. Referred to the caller as \"I\"",
+    context.calleeName ? `Callee name: ${context.calleeName}.` : "Callee name not provided; do not invent one. Referred to the callee as \"you\"",
+    context.locale
+      ? `Use language/locale: ${context.locale}.`
+      : `Assume the locale based on the provided phone number: ${context.calleePhoneNumber}`,
+    ...buildCallGuidelines(context)
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildCallGuidelines(context: PromptContext): string[] {
+  return [
     "Follow the CALL BRIEF exactly. It is the single source of truth.",
     "If any provided metadata conflicts with the CALL BRIEF, follow the CALL BRIEF.",
     "Do not invent facts, offers, or commitments not in the brief.",
@@ -61,26 +82,7 @@ export function buildSessionInstructions(context: PromptContext): string {
     `
     
 ${sampleCalls}`
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-export function buildGreetingInstructions(context: PromptContext): string {
-  return [
-    "Begin the call according to the CALL BRIEF.",
-    "If the brief does not specify an opening line, start with a natural greeting.",
-    "If you need to ask for the right person, do so.",
-    "Follow the CALL BRIEF and continue until the goal is achieved or the call concludes.",
-    context.callerName ? `Caller name: Personal assistant of ${context.callerName}.` : "Caller name not provided; do not invent one. Referred to the caller as \"I\"",
-    context.calleeName ? `Callee name: ${context.calleeName}.` : "Callee name not provided; do not invent one. Referred to the callee as \"you\"",
-    context.locale
-      ? `Use language/locale: ${context.locale}.`
-      : `Assume the locale based on the provided phone number: ${context.calleePhoneNumber}`,
-    `CALL BRIEF:\n${context.prompt}`
-  ]
-    .filter(Boolean)
-    .join(" ");
+  ];
 }
 
 function formatCurrentDateTime(timezone?: string): string | null {
