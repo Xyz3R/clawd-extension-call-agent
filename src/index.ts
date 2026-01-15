@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { parseConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
 import { CallAgentServer } from "./server.js";
-import { resolvePrompt } from "./prompting.js";
+import { resolvePrompt } from "./promps";
 import { CallRequest } from "./types.js";
 import { createTelephonyProvider } from "./telephony.js";
 

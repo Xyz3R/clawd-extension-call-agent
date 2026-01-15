@@ -12,7 +12,7 @@ import {
 import type { JsonObjectSchemaNonStrict } from "@openai/agents-core/types";
 import type { PluginConfig } from "./config.js";
 import type { DebugEvent } from "./debug.js";
-import { buildGreetingInstructions, buildPromptContext, buildSessionInstructions } from "./prompting.js";
+import { buildGreetingInstructions, buildPromptContext, buildSessionInstructions } from "./promps";
 import type { CallRecord, CallReport } from "./types.js";
 
 const DEBUG_TEXT_ENV = "OPENAI_REALTIME_DEBUG";
