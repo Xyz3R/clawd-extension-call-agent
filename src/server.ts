@@ -235,8 +235,8 @@ export class CallAgentServer {
     socket.on("close", () => this.logClients.delete(socket));
   }
 
-  private emitDebug(event: DebugEvent): void {
-    const payload = JSON.stringify(event);
+  private emitDebug(event: Omit<DebugEvent, "at">): void {
+    const payload = JSON.stringify({ at: new Date().toISOString(), ...event });
     for (const socket of this.logClients) {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(payload);

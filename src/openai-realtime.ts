@@ -1,10 +1,22 @@
-import WebSocket from "ws";
-import { PluginConfig } from "./config.js";
-import { DebugEvent } from "./debug.js";
+import { tool } from "@openai/agents";
+import {
+  OpenAIRealtimeWebSocket,
+  RealtimeAgent,
+  RealtimeSession,
+  backgroundResult,
+  type RealtimeSessionConfig,
+  type TransportEvent,
+  type TransportLayerAudio,
+  utils
+} from "@openai/agents/realtime";
+import type { JsonObjectSchemaNonStrict } from "@openai/agents-core/types";
+import type { PluginConfig } from "./config.js";
+import type { DebugEvent } from "./debug.js";
 import { buildGreetingInstructions, buildPromptContext, buildSessionInstructions } from "./prompting.js";
-import { CallRecord, CallReport } from "./types.js";
+import type { CallRecord, CallReport } from "./types.js";
 
-const OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime";
+const DEBUG_TEXT_ENV = "OPENAI_REALTIME_DEBUG";
+const GREETING_TIMEOUT_MS = 8000;
 
 export type RealtimeDeps = {
   config: PluginConfig;
@@ -16,14 +28,33 @@ export type RealtimeDeps = {
   onDebugEvent?: (event: DebugEvent) => void;
 };
 
+type OutputFormat = { type: "audio/pcmu" } | { type: "audio/pcm"; rate: number };
+type ToolCallDetails = { toolCall: unknown };
+
+type ReportCallSchema = JsonObjectSchemaNonStrict<{
+  summary: { type: "string" };
+  outcome: { type: "string"; enum: ["success", "failure", "voicemail", "no_answer", "unknown"] };
+  nextSteps: { type: "array"; items: { type: "string" } };
+  data: { type: "object"; additionalProperties: true };
+}>;
+
 export class OpenAIRealtimeSession {
-  private ws?: WebSocket;
   private deps: RealtimeDeps;
+  private session?: RealtimeSession;
   private closed = false;
-  private responsePending = false;
+  private greetingSent = false;
+  private updateSent = false;
+  private awaitingSessionUpdated = false;
+  private expectedInstructions = "";
+  private greetingInstructions = "";
+  private outputModalities: ("audio" | "text")[] = ["audio"];
+  private outputFormat: OutputFormat = { type: "audio/pcmu" };
+  private debugText = false;
+  private greetingTimer?: ReturnType<typeof setTimeout>;
 
   constructor(deps: RealtimeDeps) {
     this.deps = deps;
+    this.debugText = isDebugTextEnabled();
   }
 
   connect(): void {
@@ -35,190 +66,64 @@ export class OpenAIRealtimeSession {
       });
       return;
     }
-    const url = `${OPENAI_REALTIME_URL}?model=${encodeURIComponent(this.deps.config.openai.model)}`;
-    this.ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Bearer ${this.deps.config.openai.apiKey}`
-      }
-    });
-
-    this.ws.on("open", () => {
-      this.emitDebug({ kind: "server", message: "OpenAI websocket connected." });
-      this.sendSessionUpdate();
-    });
-    this.ws.on("error", (err) => {
-      this.deps.onLog?.(`OpenAI websocket error: ${err instanceof Error ? err.message : String(err)}`);
+    void this.start().catch((err) => {
+      this.deps.onLog?.(`OpenAI realtime session failed to start: ${err instanceof Error ? err.message : String(err)}`);
       this.emitDebug({
         kind: "server",
-        message: `OpenAI websocket error: ${err instanceof Error ? err.message : String(err)}`
+        message: `OpenAI realtime session failed to start: ${err instanceof Error ? err.message : String(err)}`
       });
       this.close();
-    });
-    this.ws.on("unexpected-response", (_req, res) => {
-      this.deps.onLog?.(`OpenAI websocket unexpected response: ${res.statusCode}`);
-      this.emitDebug({
-        kind: "server",
-        message: `OpenAI websocket unexpected response: ${res.statusCode}`
-      });
-      this.close();
-    });
-    this.ws.on("message", (data) => this.handleMessage(data.toString("utf8")));
-    this.ws.on("close", () => {
-      this.closed = true;
-      this.emitDebug({ kind: "server", message: "OpenAI websocket closed." });
     });
   }
 
   close(): void {
     if (this.closed) return;
-    this.ws?.close();
     this.closed = true;
+    if (this.greetingTimer) clearTimeout(this.greetingTimer);
+    this.session?.close();
   }
 
   sendAudioInput(base64: string): void {
-    this.send({
-      type: "input_audio_buffer.append",
-      audio: base64
-    });
+    if (this.closed || !this.session) return;
+    if (this.session.transport.status !== "connected") return;
+    try {
+      const buffer = utils.base64ToArrayBuffer(base64);
+      this.session.sendAudio(buffer);
+    } catch (err: any) {
+      this.deps.onLog?.(`Audio input decode failed: ${err?.message ?? "unknown"}`);
+    }
   }
 
-  private sendSessionUpdate(): void {
+  private async start(): Promise<void> {
     const { call } = this.deps;
     const promptContext = buildPromptContext(call, this.deps.config);
-    const instructions = buildSessionInstructions(promptContext);
+    this.expectedInstructions = buildSessionInstructions(promptContext);
+    this.greetingInstructions = buildGreetingInstructions(promptContext);
 
-    const tools = [
-      {
-        type: "function",
-        name: "report_call",
-        description: "Report call outcome to the system when the call is finished. This will end the call.",
-        parameters: {
-          type: "object",
-          additionalProperties: true,
-          properties: {
-            summary: { type: "string" },
-            outcome: {
-              type: "string",
-              enum: ["success", "failure", "voicemail", "no_answer", "unknown"]
-            },
-            nextSteps: { type: "array", items: { type: "string" } },
-            data: {
-              type: "object",
-              additionalProperties: true
-            }
-          },
-          required: ["summary"]
-        }
-      }
-    ];
+    const sessionConfig = this.buildSessionConfig();
+    const voice = call.request.voice ?? this.deps.config.openai.voice;
 
-    const inputFormat =
-      this.deps.config.openai.inputFormat === "audio/pcm"
-        ? { type: "audio/pcm", rate: 24000 }
-        : { type: this.deps.config.openai.inputFormat };
-    const outputFormat =
-      this.deps.config.openai.outputFormat === "audio/pcm"
-        ? { type: "audio/pcm", rate: this.deps.config.openai.outputSampleRate }
-        : { type: this.deps.config.openai.outputFormat };
+    const reportCallSchema: ReportCallSchema = {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        summary: { type: "string" },
+        outcome: {
+          type: "string",
+          enum: ["success", "failure", "voicemail", "no_answer", "unknown"]
+        },
+        nextSteps: { type: "array", items: { type: "string" } },
+        data: { type: "object", additionalProperties: true }
+      },
+      required: ["summary"]
+    };
 
-    this.send({
-      type: "session.update",
-      session: {
-        type: "realtime",
-        instructions,
-        output_modalities: ["audio"],
-        tool_choice: "auto",
-        tools,
-        audio: {
-          input: {
-            format: inputFormat,
-            turn_detection: { type: "server_vad", create_response: true, interrupt_response: true }
-          },
-          output: {
-            format: outputFormat,
-            voice: call.request.voice ?? this.deps.config.openai.voice
-          }
-        }
-      }
-    });
-
-    // Ask the model to greet and start the conversation.
-    this.send({
-      type: "response.create",
-      response: {
-        instructions: buildGreetingInstructions(promptContext),
-        output_modalities: ["audio"]
-      }
-    });
-    this.responsePending = true;
-  }
-
-  private async handleMessage(raw: string): Promise<void> {
-    let msg: any;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      this.emitDebug({ kind: "server", direction: "in", message: "OpenAI websocket received invalid JSON." });
-      return;
-    }
-    this.logRealtimeMessage("in", msg);
-
-    if (msg.type === "input_audio_buffer.speech_started") {
-      this.deps.onSpeechStarted?.();
-      return;
-    }
-
-    if (msg.type === "input_audio_buffer.speech_stopped") {
-      if (!this.responsePending) {
-        this.responsePending = true;
-        this.send({ type: "response.create", response: { output_modalities: ["audio"] } });
-      }
-      return;
-    }
-
-    if ((msg.type === "response.output_audio.delta" || msg.type === "response.audio.delta") && msg.delta) {
-      const audio = this.maybeTranscodeAudio(msg.delta);
-      if (audio) this.deps.onAudioDelta?.(audio);
-      return;
-    }
-
-    if (
-      msg.type === "response.completed" ||
-      msg.type === "response.done" ||
-      msg.type === "response.output_audio.done" ||
-      msg.type === "response.audio.done"
-    ) {
-      this.responsePending = false;
-      return;
-    }
-
-    if (
-      msg.type === "response.function_call_arguments.done" ||
-      msg.type === "response.tool_call_arguments.done"
-    ) {
-      await this.handleToolCall(msg);
-      return;
-    }
-
-    if (msg.type === "error" && msg.error?.message) {
-      this.deps.onLog?.(`OpenAI error: ${msg.error.message}`);
-      this.emitDebug({ kind: "server", message: `OpenAI error: ${msg.error.message}` });
-    }
-  }
-
-  private async handleToolCall(msg: any): Promise<void> {
-    const name = (msg.name ?? msg.tool_name) as string;
-    const callId = (msg.call_id ?? msg.id) as string;
-    let args: any = {};
-    try {
-      args = JSON.parse(msg.arguments ?? "{}");
-    } catch {
-      args = {};
-    }
-
-    let result: unknown;
-    try {
-      if (name === "report_call") {
+    const reportCallTool = tool({
+      name: "report_call",
+      description: "Report call outcome to the system when the call is finished. This will end the call.",
+      parameters: reportCallSchema,
+      strict: false,
+      execute: async (args: any) => {
         const report = normalizeReport(args);
         if (!this.deps.call.report) {
           const now = new Date().toISOString();
@@ -227,35 +132,223 @@ export class OpenAIRealtimeSession {
           this.deps.call.updatedAt = now;
           this.deps.onReport?.(this.deps.call, report);
         }
-        result = { ok: true };
-      } else {
-        result = { ok: false, error: `Unknown tool: ${name}` };
-      }
-    } catch (err: any) {
-      result = { ok: false, error: err?.message ?? "Tool error" };
-    }
-
-    this.send({
-      type: "conversation.item.create",
-      item: {
-        type: "function_call_output",
-        call_id: callId,
-        output: JSON.stringify(result)
+        return backgroundResult({ ok: true });
       }
     });
 
-    if (name !== "report_call") {
-      this.send({ type: "response.create" });
+    const agent = new RealtimeAgent({
+      name: "call-agent",
+      instructions: this.expectedInstructions,
+      voice,
+      tools: [reportCallTool]
+    });
+
+    const transport = new OpenAIRealtimeWebSocket({
+      useInsecureApiKey: true
+    });
+
+    this.session = new RealtimeSession(agent, {
+      transport,
+      apiKey: this.deps.config.openai.apiKey,
+      model: this.deps.config.openai.model,
+      config: sessionConfig
+    });
+
+    this.attachSessionHandlers(this.session);
+
+    await this.session.connect({
+      apiKey: this.deps.config.openai.apiKey,
+      model: this.deps.config.openai.model
+    });
+  }
+
+  private buildSessionConfig(): Partial<RealtimeSessionConfig> {
+    const config = this.deps.config.openai;
+    const outputModalities: ("audio" | "text")[] = this.debugText ? ["audio", "text"] : ["audio"];
+    const inputFormat = this.resolveInputFormat(config);
+    const outputFormat = this.resolveOutputFormat(config);
+    const transcription = this.debugText ? { model: "gpt-4o-mini-transcribe" } : null;
+
+    this.outputModalities = outputModalities;
+    this.outputFormat = outputFormat;
+
+    return {
+      toolChoice: "auto",
+      outputModalities,
+      audio: {
+        input: {
+          format: inputFormat,
+          transcription,
+          turnDetection: {
+            type: "server_vad",
+            createResponse: true,
+            interruptResponse: true
+          }
+        },
+        output: {
+          format: outputFormat
+        }
+      }
+    };
+  }
+
+  private resolveInputFormat(config: PluginConfig["openai"]): { type: "audio/pcmu" } {
+    if (config.inputFormat !== "audio/pcmu") {
+      this.deps.onLog?.(
+        `Input format ${config.inputFormat} does not match Twilio (audio/pcmu). Forcing audio/pcmu.`
+      );
+    }
+    return { type: "audio/pcmu" };
+  }
+
+  private resolveOutputFormat(config: PluginConfig["openai"]): OutputFormat {
+    if (config.outputFormat === "audio/pcmu") {
+      return { type: "audio/pcmu" };
+    }
+
+    if (config.outputFormat === "audio/pcma") {
+      this.deps.onLog?.("audio/pcma output is not supported for Twilio; using audio/pcmu instead.");
+      return { type: "audio/pcmu" };
+    }
+
+    if (config.outputSampleRate !== 24000) {
+      this.deps.onLog?.(
+        `PCM output is fixed at 24000 Hz. Requested ${config.outputSampleRate}; using 24000 Hz.`
+      );
+    }
+    return { type: "audio/pcm", rate: 24000 };
+  }
+
+  private attachSessionHandlers(session: RealtimeSession): void {
+    session.on("transport_event", (event) => {
+      this.handleTransportEvent(event);
+    });
+
+    session.on("audio", (event) => {
+      this.handleAudio(event);
+    });
+
+    session.on("audio_interrupted", () => {
+      this.deps.onSpeechStarted?.();
+    });
+
+    session.on("agent_tool_start", (_ctx, _agent, toolInstance, details: ToolCallDetails) => {
+      const toolCall = parseToolCall(details.toolCall);
+      const message = stringifyRealtimePayload({
+        tool: toolInstance.name,
+        arguments: toolCall?.arguments
+      });
+      this.emitDebug({
+        kind: "tool",
+        direction: "in",
+        message,
+        openaiType: toolInstance.name
+      });
+    });
+
+    session.on("agent_tool_end", (_ctx, _agent, toolInstance, result, details: ToolCallDetails) => {
+      const toolCall = parseToolCall(details.toolCall);
+      const message = stringifyRealtimePayload({
+        tool: toolInstance.name,
+        result,
+        callId: toolCall?.callId
+      });
+      this.emitDebug({
+        kind: "tool",
+        direction: "out",
+        message,
+        openaiType: toolInstance.name
+      });
+    });
+
+    session.on("error", (error) => {
+      this.deps.onLog?.(`OpenAI session error: ${String(error?.error ?? error)}`);
+      this.emitDebug({
+        kind: "server",
+        message: `OpenAI session error: ${String(error?.error ?? error)}`
+      });
+    });
+  }
+
+  private handleTransportEvent(event: TransportEvent): void {
+    this.logRealtimeMessage("in", event);
+
+    if (event.type === "input_audio_buffer.speech_started") {
+      this.deps.onSpeechStarted?.();
+      return;
+    }
+
+    if (event.type === "session.created") {
+      void this.sendSessionUpdate();
+      return;
+    }
+
+    if (event.type === "session.updated") {
+      if (!this.awaitingSessionUpdated) return;
+      this.awaitingSessionUpdated = false;
+
+      const appliedInstructions = getSessionInstructions(event);
+      if (appliedInstructions && appliedInstructions !== this.expectedInstructions) {
+        this.deps.onLog?.("Session instructions mismatch after update. Proceeding with greeting.");
+      }
+
+      this.sendGreeting();
+      return;
     }
   }
 
-  private maybeTranscodeAudio(base64: string): string | null {
-    if (this.deps.config.openai.outputFormat === "audio/pcmu") {
-      return base64;
+  private async sendSessionUpdate(): Promise<void> {
+    if (this.updateSent || !this.session) return;
+    this.updateSent = true;
+    this.awaitingSessionUpdated = true;
+    const config = await this.session.getInitialSessionConfig();
+    const payload = {
+      type: "session.update",
+      session: config
+    };
+    this.logRealtimeMessage("out", payload);
+    this.session.transport.updateSessionConfig(config);
+    this.armGreetingTimeout();
+  }
+
+  private armGreetingTimeout(): void {
+    if (this.greetingTimer) clearTimeout(this.greetingTimer);
+    this.greetingTimer = setTimeout(() => {
+      if (this.greetingSent) return;
+      this.deps.onLog?.("Timed out waiting for session.updated; sending greeting anyway.");
+      this.sendGreeting();
+    }, GREETING_TIMEOUT_MS);
+  }
+
+  private sendGreeting(): void {
+    if (this.greetingSent || !this.session) return;
+    this.greetingSent = true;
+    if (this.greetingTimer) clearTimeout(this.greetingTimer);
+
+    const payload = {
+      type: "response.create",
+      response: {
+        instructions: this.greetingInstructions,
+        output_modalities: this.outputModalities
+      }
+    };
+
+    this.logRealtimeMessage("out", payload);
+    this.session.transport.sendEvent(payload);
+  }
+
+  private handleAudio(event: TransportLayerAudio): void {
+    const audio = this.encodeAudio(event.data);
+    if (audio) this.deps.onAudioDelta?.(audio);
+  }
+
+  private encodeAudio(data: ArrayBuffer): string | null {
+    if (this.outputFormat.type === "audio/pcmu") {
+      return utils.arrayBufferToBase64(data);
     }
 
     try {
-      const pcm = Buffer.from(base64, "base64");
+      const pcm = Buffer.from(data);
       const downsampled = downsamplePcm24To8(pcm);
       const ulaw = encodeMuLaw(downsampled);
       return ulaw.toString("base64");
@@ -263,12 +356,6 @@ export class OpenAIRealtimeSession {
       this.deps.onLog?.(`Audio transcode failed: ${err?.message ?? "unknown"}`);
       return null;
     }
-  }
-
-  private send(payload: unknown): void {
-    if (this.closed) return;
-    this.logRealtimeMessage("out", payload);
-    this.ws?.send(JSON.stringify(payload));
   }
 
   private emitDebug(event: Omit<DebugEvent, "at" | "callId"> & { callId?: string }): void {
@@ -293,6 +380,25 @@ export class OpenAIRealtimeSession {
       isAudio
     });
   }
+}
+
+function isDebugTextEnabled(): boolean {
+  const value = (process.env[DEBUG_TEXT_ENV] ?? "").toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function getSessionInstructions(event: any): string | undefined {
+  if (typeof event?.session?.instructions === "string") return event.session.instructions;
+  if (typeof event?.session?.config?.instructions === "string") return event.session.config.instructions;
+  return undefined;
+}
+
+function parseToolCall(toolCall: unknown): { arguments?: string; callId?: string } | undefined {
+  if (!toolCall || typeof toolCall !== "object") return undefined;
+  const callId = typeof (toolCall as { callId?: unknown }).callId === "string" ? (toolCall as any).callId : undefined;
+  const args =
+    typeof (toolCall as { arguments?: unknown }).arguments === "string" ? (toolCall as any).arguments : undefined;
+  return callId || args ? { callId, arguments: args } : undefined;
 }
 
 function stringifyRealtimePayload(payload: unknown): string {
