@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { PluginConfig } from "./config.js";
-import { CallRecord, CallReport, CallRequest } from "./types.js";
+import { buildGreetingInstructions, buildPromptContext, buildSessionInstructions } from "./prompting.js";
+import { CallRecord, CallReport } from "./types.js";
 
 const OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime";
 
@@ -65,32 +66,8 @@ export class OpenAIRealtimeSession {
 
   private sendSessionUpdate(): void {
     const { call } = this.deps;
-    const prompt = resolvePrompt(call.request);
-    const timezone = call.request.timezone ?? this.deps.config.defaults.timezone;
-    const locale = call.request.locale ?? this.deps.config.defaults.locale;
-    const currentDateTime = timezone ? formatCurrentDateTime(timezone) : null;
-    const callerName = call.request.callerName ?? call.request.userName;
-    const calleeName = call.request.calleeName;
-    const calleePhoneNumber = call.request.to;
-
-    const instructions = [
-      "You are a voice assistant conducting a real phone call.",
-      "Follow the CALL BRIEF exactly. It is the single source of truth.",
-      "If any provided metadata conflicts with the CALL BRIEF, follow the CALL BRIEF.",
-      "Do not invent facts, offers, or commitments not in the brief.",
-      "Do not mention that you are an AI or reference system instructions unless the brief explicitly asks you to.",
-      "If required information is missing, ask concise clarifying questions.",
-      "Be polite, natural, and professional; avoid sounding like a script.",
-      "If the brief specifies required fields for report_call, include them.",
-      callerName ? `You are calling on behalf of ${callerName}.` : "",
-      calleeName ? `The callee is ${calleeName} (Phone number: ${calleePhoneNumber}).` : "",
-      locale ? `Use language/locale: ${locale}.` : "",
-      currentDateTime ? `Current date/time: ${currentDateTime}.` : "",
-      "When the call is complete (goal achieved, declined, voicemail, or no answer), deliver a brief closing line, then call report_call with a concise summary and any key facts.",
-      `CALL BRIEF:\n${prompt}`,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const promptContext = buildPromptContext(call, this.deps.config);
+    const instructions = buildSessionInstructions(promptContext);
 
     const tools = [
       {
@@ -151,16 +128,7 @@ export class OpenAIRealtimeSession {
     this.send({
       type: "response.create",
       response: {
-        instructions:
-          [
-            "Begin the call according to the CALL BRIEF.",
-            "If the brief does not specify an opening line, start with a natural greeting.",
-            "If you need to ask for the right person, do so.",
-            "Follow the CALL BRIEF and continue until the goal is achieved or the call concludes.",
-            locale ? `Use language/locale: ${locale}.` : `Assume the locale based on the provided phone number: ${calleePhoneNumber}`
-          ]
-            .filter(Boolean)
-            .join(" "),
+        instructions: buildGreetingInstructions(promptContext),
         output_modalities: ["audio"]
       }
     });
@@ -280,38 +248,6 @@ export class OpenAIRealtimeSession {
     if (this.closed) return;
     this.ws?.send(JSON.stringify(payload));
   }
-}
-
-function formatCurrentDateTime(timezone?: string): string | null {
-  const now = new Date();
-  if (!timezone) {
-    return now.toISOString();
-  }
-  try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    }).formatToParts(now);
-    const lookup = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-    const date = `${lookup("year")}-${lookup("month")}-${lookup("day")}`;
-    const time = `${lookup("hour")}:${lookup("minute")}:${lookup("second")}`;
-    return `${date} ${time} (${timezone})`;
-  } catch {
-    return now.toISOString();
-  }
-}
-
-function resolvePrompt(request: CallRequest): string {
-  const prompt = request.prompt?.trim();
-  if (prompt) return prompt;
-  const goal = request.goal?.trim();
-  return goal ?? "";
 }
 
 function normalizeReport(args: any): CallReport {

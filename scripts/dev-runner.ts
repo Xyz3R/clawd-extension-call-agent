@@ -38,7 +38,6 @@ if (!config.openai.apiKey) {
 
 const callPrompt =
   process.env.CALL_PROMPT ??
-  process.env.CALL_GOAL ??
   "Call the business, ask for their current hours, and confirm whether walk-ins are accepted today. Be polite and concise.";
 
 const telephony = createTelephonyProvider(config);
@@ -67,8 +66,8 @@ if (process.env.AUTO_CALL === "1") {
     to: "+4915781231232",
     prompt: callPrompt,
     timezone: config.defaults.timezone,
+    callerName: "Felix Mennen",
     // locale: "de",
-    // goal: callPrompt,
   };
   const { call, start } = await callManager.startCall(req);
   logger.info(`Started call ${call.id}. ${start.userHint ?? ""}`);
@@ -81,4 +80,4 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-console.log(`Prompt: ${process.env.CALL_PROMPT ?? process.env.CALL_GOAL ?? ""}`);
+console.log(`Prompt: ${process.env.CALL_PROMPT ?? ""}`);

@@ -91,9 +91,8 @@ Expected HTTP endpoints:
 Purpose: Provide a Clawdbot plugin that places calls via a telephony provider and runs a realtime voice agent driven by a caller-provided prompt.
 
 Tools:
-- `call_agent` — starts a call. Inputs: `to`, `prompt` (preferred), optional `timezone`, `locale`, `callerName`, `calleeName`, `voice`, `metadata`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
+- `call_agent` — starts a call. Inputs: `to`, `prompt`, optional `timezone`, `locale`, `callerName`, `calleeName`, `voice`, `metadata`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
 - `call_agent_status` — returns status for a `callId` plus any reported outcome.
-  - Legacy note: `goal` is still accepted as a fallback for `prompt`.
 
 Tip: If you need a specific report schema, include it in the prompt and the agent will return it via `report_call`.
 

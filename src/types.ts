@@ -1,11 +1,9 @@
 export type CallRequest = {
   to: string;
   prompt?: string;
-  goal?: string; // deprecated: use prompt
   timezone?: string;
   locale?: string;
   callerName?: string;
-  userName?: string; // deprecated: use callerName
   calleeName?: string;
   voice?: string;
   metadata?: Record<string, unknown>;

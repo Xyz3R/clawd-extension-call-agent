@@ -2,17 +2,16 @@ import { Type } from "@sinclair/typebox";
 import { parseConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
 import { CallAgentServer } from "./server.js";
+import { resolvePrompt } from "./prompting.js";
 import { CallRequest } from "./types.js";
 import { createTelephonyProvider } from "./telephony.js";
 
 const CallAgentInput = Type.Object({
   to: Type.String({ description: "E.164 phone number to call" }),
   prompt: Type.Optional(Type.String({ description: "Detailed call brief with all necessary context and instructions" })),
-  goal: Type.Optional(Type.String({ description: "Deprecated. Use prompt instead." })),
   timezone: Type.Optional(Type.String({ description: "IANA timezone for current date/time context" })),
   locale: Type.Optional(Type.String({ description: "BCP-47 language tag (e.g., en-US)" })),
   callerName: Type.Optional(Type.String({ description: "Name of the person or org you are calling on behalf of" })),
-  userName: Type.Optional(Type.String({ description: "Deprecated. Use callerName instead." })),
   calleeName: Type.Optional(Type.String({ description: "Name of the person you are calling" })),
   voice: Type.Optional(Type.String({ description: "Override the OpenAI voice for this call" })),
   metadata: Type.Optional(Type.Record(Type.String(), Type.Any()))
@@ -59,13 +58,13 @@ export default {
       description: "Start a phone call with an AI agent following a provided prompt.",
       inputSchema: CallAgentInput,
       execute: async (_id: string, params: CallRequest) => {
-        const prompt = params.prompt?.trim() ?? params.goal?.trim() ?? "";
+        const prompt = resolvePrompt(params);
         if (!prompt) {
           return {
             content: [
               {
                 type: "text",
-                text: "Missing prompt. Provide `prompt` (preferred) or `goal`."
+                text: "Missing prompt. Provide `prompt`."
               }
             ]
           };
