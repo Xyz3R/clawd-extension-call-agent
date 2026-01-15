@@ -2,7 +2,7 @@
 
 # Clawdbot Call Agent (Twilio + OpenAI Realtime)
 
-This plugin adds a `call_agent` tool that places a phone call via Twilio Media Streams, runs a realtime voice agent through OpenAI Realtime, and schedules an appointment using occupied timeslots supplied with the tool input (no standalone calendar server required).
+This plugin adds a `call_agent` tool that places a phone call via Twilio Media Streams and runs a realtime voice agent through OpenAI Realtime. It is multi-purpose: provide a detailed prompt and the agent will execute on it.
 
 ## Install
 
@@ -45,13 +45,13 @@ Or load via `plugins.load.paths` and point at `src/index.ts`.
   },
   "defaults": {
     "timezone": "America/Los_Angeles",
-    "workingHours": { "start": "09:00", "end": "17:00", "days": [1,2,3,4,5] }
+    "locale": "en-US"
   },
   "retry": {
     "maxAttempts": 3,
     "initialDelayMs": 60000,
     "backoffFactor": 2,
-    "retryStatuses": ["busy", "no-answer", "failed"]
+    "retryStatuses": ["busy", "no_answer", "failed"]
   },
   "tunnel": {
     "provider": "auto"
@@ -64,6 +64,10 @@ If `publicBaseUrl` is not provided, the plugin attempts to open a tunnel via `ta
 ### Mock provider (local dev)
 
 Set `"telephony.provider": "mock"` to fake a phone call from your local mic/speakers. Start a call with `call_agent` and open the provided mock URL in your browser to talk to the agent.
+
+### Notifications
+
+If `notify.hooksUrl` and `notify.hooksToken` are set, the plugin posts a call report summary to `/hooks/agent` when the agent invokes `report_call`.
 
 ## Telephony provider interface (for adding new vendors)
 
@@ -84,18 +88,21 @@ Expected HTTP endpoints:
 
 ## LLM ingestion (contract summary)
 
-Purpose: Provide a Clawdbot plugin that places calls via a telephony provider, runs a realtime voice agent, and schedules appointments without calendar conflicts.
+Purpose: Provide a Clawdbot plugin that places calls via a telephony provider and runs a realtime voice agent driven by a caller-provided prompt.
 
 Tools:
-- `call_agent` — starts a call. Inputs: `to`, `goal`, `durationMinutes`, optional `timezone`, `windowStart`, `windowEnd`, `workingHours`, `calendarId`, `occupiedTimeslots`, `userName`, `calleeName`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
-- `call_agent_status` — returns status for a `callId`.
+- `call_agent` — starts a call. Inputs: `to`, `prompt` (preferred), optional `timezone`, `locale`, `callerName`, `calleeName`, `voice`, `metadata`. Output includes `callId` and a hint URL when `telephony.provider = "mock"`.
+- `call_agent_status` — returns status for a `callId` plus any reported outcome.
+  - Legacy note: `goal` is still accepted as a fallback for `prompt`.
+
+Tip: If you need a specific report schema, include it in the prompt and the agent will return it via `report_call`.
 
 Call flow:
 1) `call_agent` creates a call job and starts the provider.
 2) Provider hits `POST /voice` → plugin returns connect response to `/voice/stream`.
 3) `/voice/stream` streams mu-law audio between provider and OpenAI Realtime.
-4) Realtime model calls calendar tools backed by the provided occupied timeslots.
-5) On `calendar_create_event` success, plugin notifies user via `/hooks/agent` (if configured) and ends the call.
+4) The realtime model follows the prompt and calls `report_call` with a structured summary when finished.
+5) On `report_call`, the plugin ends the call and optionally notifies `/hooks/agent` (if configured).
 
 Config keys:
 - `telephony.provider`: `twilio | mock`
@@ -103,13 +110,13 @@ Config keys:
 - `twilio.*` (when using Twilio)
 - `openai.*` (Realtime model/voice/audio format)
 - `notify.hooksUrl`, `notify.hooksToken`, `notify.sessionKey`
-- `defaults.timezone`, `defaults.workingHours`
+- `defaults.timezone`, `defaults.locale`
 - `retry.*`, `tunnel.provider`
 
 
 ## Tools
 
-- `call_agent` — start a phone call to schedule an appointment.
+- `call_agent` — start a phone call driven by a prompt.
 - `call_agent_status` — check call status by id.
 
 ## Notes

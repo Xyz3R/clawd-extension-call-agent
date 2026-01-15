@@ -82,7 +82,8 @@ export class CallManager {
 
   private shouldRetry(status: CallStatus, call: CallRecord): boolean {
     if (call.attempt >= this.config.retry.maxAttempts) return false;
-    return this.config.retry.retryStatuses.includes(status);
+    const normalized = normalizeStatus(status);
+    return this.config.retry.retryStatuses.map(normalizeStatus).includes(normalized);
   }
 
   private nextDelay(attempt: number): number {
@@ -101,4 +102,8 @@ export class CallManager {
       }
     }
   }
+}
+
+function normalizeStatus(value: string): string {
+  return value.toLowerCase().replace(/[-\s]/g, "_");
 }

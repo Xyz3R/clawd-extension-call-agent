@@ -27,8 +27,7 @@ const config = parseConfig({
     outputSampleRate: Number(process.env.OPENAI_OUTPUT_RATE ?? 24000)
   },
   defaults: {
-    timezone: fallbackTimezone,
-    workingHours: { start: "09:00", end: "17:00", days: [1, 2, 3, 4, 5] }
+    timezone: fallbackTimezone
   },
   tunnel: { provider: "none" }
 });
@@ -37,7 +36,10 @@ if (!config.openai.apiKey) {
   logger.warn("OPENAI_API_KEY is not set. The realtime session will fail to connect.");
 }
 
-const callGoal = process.env.CALL_GOAL ?? "Schedule a 30-minute appointment today.";
+const callPrompt =
+  process.env.CALL_PROMPT ??
+  process.env.CALL_GOAL ??
+  "Call the business, ask for their current hours, and confirm whether walk-ins are accepted today. Be polite and concise.";
 
 const telephony = createTelephonyProvider(config);
 let server!: CallAgentServer;
@@ -58,22 +60,15 @@ server = new CallAgentServer({
 
 await server.start();
 logger.info(`Call agent server up on http://127.0.0.1:${port}`);
-logger.info(`Call goal: ${callGoal}`);
+logger.info(`Call prompt: ${callPrompt}`);
 
 if (process.env.AUTO_CALL === "1") {
-  const now = new Date();
-  const { windowStart, windowEnd, occupiedTimeslots } = buildTodayTestSchedule(now);
-  const todayWorkingHours = { ...config.defaults.workingHours, days: [now.getDay()] };
   const req: CallRequest = {
-    to: "+15555555555",
-    goal: callGoal,
-    durationMinutes: 30,
+    to: "+4915781231232",
+    prompt: callPrompt,
     timezone: config.defaults.timezone,
-    workingHours: todayWorkingHours,
-    calendarId: "primary",
-    windowStart,
-    windowEnd,
-    occupiedTimeslots
+    // locale: "de",
+    // goal: callPrompt,
   };
   const { call, start } = await callManager.startCall(req);
   logger.info(`Started call ${call.id}. ${start.userHint ?? ""}`);
@@ -86,34 +81,4 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-console.log(`Goal: ${process.env.CALL_GOAL}`);
-function buildTodayTestSchedule(baseDate: Date): {
-  windowStart: string;
-  windowEnd: string;
-  occupiedTimeslots: { start: string; end: string }[];
-} {
-  const base = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 9, 0, 0, 0);
-  const windowStart = base.toISOString();
-  const windowEnd = new Date(base.getTime() + 3 * 60 * 60 * 1000).toISOString();
-
-  const occupiedTimeslots = [
-    slot(base, 30, 60),
-    slot(base, 90, 120),
-    slot(base, 150, 180)
-  ]
-
-  console.log(`Occupied Timeslots: ${JSON.stringify(occupiedTimeslots, null, 2)}`)
-
-
-  return {
-    windowStart,
-    windowEnd,
-    occupiedTimeslots,
-  };
-}
-
-function slot(base: Date, startOffsetMinutes: number, endOffsetMinutes: number): { start: string; end: string } {
-  const start = new Date(base.getTime() + startOffsetMinutes * 60_000).toISOString();
-  const end = new Date(base.getTime() + endOffsetMinutes * 60_000).toISOString();
-  return { start, end };
-}
+console.log(`Prompt: ${process.env.CALL_PROMPT ?? process.env.CALL_GOAL ?? ""}`);

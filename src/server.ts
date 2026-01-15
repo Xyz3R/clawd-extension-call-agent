@@ -4,7 +4,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { PluginConfig } from "./config.js";
 import { CallManager } from "./call-manager.js";
 import { OpenAIRealtimeSession } from "./openai-realtime.js";
-import { CallRecord } from "./types.js";
+import { CallRecord, CallReport } from "./types.js";
 import { ensurePublicUrl, TunnelInfo } from "./tunnel.js";
 import type { TelephonyProvider } from "./telephony.js";
 
@@ -136,7 +136,7 @@ export class CallAgentServer {
         const session = new OpenAIRealtimeSession({
           config: this.deps.config,
           call,
-          onScheduled: (updated) => this.handleScheduled(updated),
+          onReport: (updated, report) => void this.handleReport(updated, report),
           onSpeechStarted: () => {
             if (call.streamSid) {
               socket.send(JSON.stringify({ event: "clear", streamSid: call.streamSid }));
@@ -179,20 +179,27 @@ export class CallAgentServer {
     });
   }
 
-  private async handleScheduled(call: CallRecord): Promise<void> {
-    call.status = "completed";
-    setTimeout(() => void this.deps.callManager.endCall(call.id), 3000);
-    await this.notifyUser(call);
+  private async handleReport(call: CallRecord, report: CallReport): Promise<void> {
+    if (!call.completedAt) {
+      const now = new Date().toISOString();
+      call.status = "completed";
+      call.completedAt = now;
+      call.updatedAt = now;
+    }
+    setTimeout(() => void this.deps.callManager.endCall(call.id), 2500);
+    await this.notifyUser(call, report);
   }
 
-  private async notifyUser(call: CallRecord): Promise<void> {
+  private async notifyUser(call: CallRecord, report?: CallReport): Promise<void> {
     const { hooksUrl, hooksToken, sessionKey } = this.deps.config.notify;
-    if (!hooksUrl || !hooksToken || !call.scheduledEvent) return;
+    if (!hooksUrl || !hooksToken) return;
 
+    const summary = report?.summary ?? call.report?.summary;
+    const outcome = report?.outcome ?? call.report?.outcome ?? call.status;
     const message = [
-      `Appointment scheduled with ${call.request.calleeName ?? call.request.to}.`,
-      `Time: ${call.scheduledEvent.start} to ${call.scheduledEvent.end} (${call.scheduledEvent.timezone}).`,
-      call.scheduledEvent.summary ? `Title: ${call.scheduledEvent.summary}` : ""
+      `Call completed with ${call.request.calleeName ?? call.request.to}.`,
+      outcome ? `Outcome: ${outcome}.` : "",
+      summary ? `Summary: ${summary}` : ""
     ]
       .filter(Boolean)
       .join(" ");
@@ -209,7 +216,15 @@ export class CallAgentServer {
           name: "CallAgent",
           sessionKey,
           wakeMode: "now",
-          deliver: true
+          deliver: true,
+          data: {
+            callId: call.id,
+            status: call.status,
+            to: call.request.to,
+            calleeName: call.request.calleeName,
+            report: report ?? call.report ?? null,
+            metadata: call.request.metadata ?? null
+          }
         })
       });
     } catch (err: any) {

@@ -36,7 +36,7 @@ export type PluginConfig = {
   };
   defaults: {
     timezone?: string;
-    workingHours: { start: string; end: string; days: number[] };
+    locale?: string;
   };
   tunnel: {
     provider: "auto" | "ngrok" | "tailscale" | "none";
@@ -70,11 +70,9 @@ export const defaultConfig: PluginConfig = {
     maxAttempts: 3,
     initialDelayMs: 60_000,
     backoffFactor: 2,
-    retryStatuses: ["busy", "no-answer", "failed"]
+    retryStatuses: ["busy", "no_answer", "failed"]
   },
-  defaults: {
-    workingHours: { start: "09:00", end: "17:00", days: [1, 2, 3, 4, 5] }
-  },
+  defaults: {},
   tunnel: {
     provider: "auto"
   }

@@ -7,29 +7,15 @@ import { createTelephonyProvider } from "./telephony.js";
 
 const CallAgentInput = Type.Object({
   to: Type.String({ description: "E.164 phone number to call" }),
-  goal: Type.String({ description: "Goal of the call" }),
-  timezone: Type.Optional(Type.String({ description: "IANA timezone" })),
-  durationMinutes: Type.Number({ description: "Desired appointment length in minutes" }),
-  windowStart: Type.Optional(Type.String({ description: "RFC3339 start of scheduling window" })),
-  windowEnd: Type.Optional(Type.String({ description: "RFC3339 end of scheduling window" })),
-  workingHours: Type.Optional(
-    Type.Object({
-      start: Type.String(),
-      end: Type.String(),
-      days: Type.Array(Type.Number())
-    })
-  ),
-  calendarId: Type.Optional(Type.String()),
-  occupiedTimeslots: Type.Optional(
-    Type.Array(
-      Type.Object({
-        start: Type.String({ description: "RFC3339 start time" }),
-        end: Type.String({ description: "RFC3339 end time" })
-      })
-    )
-  ),
-  userName: Type.Optional(Type.String()),
-  calleeName: Type.Optional(Type.String())
+  prompt: Type.Optional(Type.String({ description: "Detailed call brief with all necessary context and instructions" })),
+  goal: Type.Optional(Type.String({ description: "Deprecated. Use prompt instead." })),
+  timezone: Type.Optional(Type.String({ description: "IANA timezone for current date/time context" })),
+  locale: Type.Optional(Type.String({ description: "BCP-47 language tag (e.g., en-US)" })),
+  callerName: Type.Optional(Type.String({ description: "Name of the person or org you are calling on behalf of" })),
+  userName: Type.Optional(Type.String({ description: "Deprecated. Use callerName instead." })),
+  calleeName: Type.Optional(Type.String({ description: "Name of the person you are calling" })),
+  voice: Type.Optional(Type.String({ description: "Override the OpenAI voice for this call" })),
+  metadata: Type.Optional(Type.Record(Type.String(), Type.Any()))
 });
 
 const CallAgentStatusInput = Type.Object({
@@ -70,16 +56,28 @@ export default {
 
     api.registerTool({
       name: "call_agent",
-      description: "Start a phone call with an AI agent to schedule an appointment.",
+      description: "Start a phone call with an AI agent following a provided prompt.",
       inputSchema: CallAgentInput,
       execute: async (_id: string, params: CallRequest) => {
-        const { call, start } = await callManager.startCall(params);
+        const prompt = params.prompt?.trim() ?? params.goal?.trim() ?? "";
+        if (!prompt) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Missing prompt. Provide `prompt` (preferred) or `goal`."
+              }
+            ]
+          };
+        }
+        const request: CallRequest = { ...params, prompt };
+        const { call, start } = await callManager.startCall(request);
         return {
           content: [
             {
               type: "text",
               text: [
-                `Call started (id: ${call.id}). I'll update you when scheduling completes.`,
+                `Call started (id: ${call.id}). Check status with call_agent_status.`,
                 start.userHint ?? ""
               ]
                 .filter(Boolean)
@@ -104,7 +102,12 @@ export default {
           content: [
             {
               type: "text",
-              text: `Status: ${call.status}. Attempts: ${call.attempt}.`
+              text: [
+                `Status: ${call.status}. Attempts: ${call.attempt}.`,
+                call.report?.summary ? `Summary: ${call.report.summary}` : ""
+              ]
+                .filter(Boolean)
+                .join(" ")
             }
           ],
           data: call

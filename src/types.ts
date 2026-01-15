@@ -1,21 +1,21 @@
-export type WorkingHours = {
-  start: string; // "HH:mm"
-  end: string;   // "HH:mm"
-  days: number[]; // 0=Sun..6=Sat
-};
-
 export type CallRequest = {
   to: string;
-  goal: string;
+  prompt?: string;
+  goal?: string; // deprecated: use prompt
   timezone?: string;
-  durationMinutes: number;
-  windowStart?: string; // RFC3339
-  windowEnd?: string;   // RFC3339
-  workingHours?: WorkingHours;
-  calendarId?: string;
-  occupiedTimeslots?: CalendarSlot[];
-  userName?: string;
+  locale?: string;
+  callerName?: string;
+  userName?: string; // deprecated: use callerName
   calleeName?: string;
+  voice?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type CallReport = {
+  summary: string;
+  outcome?: "success" | "failure" | "voicemail" | "no_answer" | "unknown";
+  nextSteps?: string[];
+  data?: Record<string, unknown>;
 };
 
 export type CallStatus =
@@ -38,77 +38,6 @@ export type CallRecord = {
   lastError?: string;
   createdAt: string;
   updatedAt: string;
-  scheduledEvent?: {
-    eventId: string;
-    calendarId: string;
-    start: string;
-    end: string;
-    timezone: string;
-    summary?: string;
-  };
-};
-
-export type CalendarSlot = {
-  start: string;
-  end: string;
-};
-
-export type CalendarFindSlotsRequest = {
-  calendarIds: string[];
-  windowStart: string;
-  windowEnd: string;
-  durationMinutes: number;
-  timezone: string;
-  granularityMinutes?: number;
-  bufferBeforeMinutes?: number;
-  bufferAfterMinutes?: number;
-  workingHours?: WorkingHours;
-  attendees?: { email: string; optional?: boolean }[];
-};
-
-export type CalendarCheckSlotRequest = {
-  calendarIds: string[];
-  start: string;
-  end: string;
-  timezone: string;
-  bufferBeforeMinutes?: number;
-  bufferAfterMinutes?: number;
-};
-
-export type CalendarCreateEventRequest = {
-  calendarId: string;
-  start: string;
-  end: string;
-  timezone: string;
-  title: string;
-  description?: string;
-  location?: string;
-  attendees?: { email: string; optional?: boolean }[];
-  idempotencyKey: string;
-};
-
-export type CalendarFindSlotsResponse = {
-  ok: boolean;
-  timezone: string;
-  slots: CalendarSlot[];
-  windowStart: string;
-  windowEnd: string;
-  error?: string;
-};
-
-export type CalendarCheckSlotResponse = {
-  ok: boolean;
-  conflicts?: { summary: string; start: string; end: string }[];
-  alternatives?: CalendarSlot[];
-  error?: string;
-};
-
-export type CalendarCreateEventResponse = {
-  ok: boolean;
-  eventId?: string;
-  calendarId?: string;
-  start?: string;
-  end?: string;
-  timezone?: string;
-  error?: string;
+  completedAt?: string;
+  report?: CallReport;
 };
